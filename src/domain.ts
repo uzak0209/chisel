@@ -156,7 +156,7 @@ function productOf(domains: readonly Domain[], limit: number): { values: unknown
   return { values, exhaustive };
 }
 
-function integralBounds(schema: AnySchema, measure: Measure): { lower: number; upper: number | undefined } {
+export function integralBounds(schema: AnySchema, measure: Measure): { lower: number; upper: number | undefined } {
   let lower = counts(measure) ? 0 : -Infinity;
   let upper = Infinity;
   for (const rule of schema.invariants.flatMap(conjuncts)) {

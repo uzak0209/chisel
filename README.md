@@ -402,6 +402,28 @@ c.implement(approve, {
 
 A disregarded field draws no classes of its type, no invariant borders and no borders an `ensures` clause draws on it, so `generate` offers no row that only moves it; where a guard or a `match` reads it, it keeps the classes the guard draws or its own classes, since the arms turn on them. Every input case is still owed its row, guards still draw their borders and arms from the whole input, and an invariant that leaves a disregarded field empty is still a model error. Rows keep the whole record, so `c.test` hands production code what it takes. `check` holds the claim: it moves the disregarded fields of an answered row, each element of an array and each entry of a record on its own, through every combination of their other classes and of the invariant border points they would have owed (`IN (> 0)` for an `int().min(0)` at 0), smallest first, runs the model on each and fails the row on the first answer that changes, naming the fields it moved (`approve disregards @submitted.urgent, but its answer changed when @submitted.urgent was true`). A row with more than 255 combinations the input can hold, or more than 4096 candidates before those it cannot hold are left out, is not tried (the limits are the caller's: `c.check(specification, { disregards: { combinations, candidates } })`, or `chisel check --disregard-combinations <n> --disregard-candidates <n>`); it is listed in `incompleteness` as `disregards not checked` and leaves the verdict `undetermined`. `cases.$default` decides every case `cases` leaves out; it is one decision, so its arms and ways are listed once and owed wherever one of its cases can reach them, a `c.todo` there leaves each of its cases pending, and a `$default` beside cases that decide every case is refused. An input case cannot be named `$default`. [`examples/expense-report/`](examples/expense-report/) writes three behaviors over one five-state model both ways.
 
+## Invariants across operations
+
+Examples show that each behavior answers as its rows say; they do not show that a record several behaviors share stays whole however they are combined. A purchase order that one behavior creates, another amends and a third receives against keeps invariants none of them sees alone. Declare the record's schema with its invariants, and the operations that move it:
+
+```ts
+const Order = c.object({ lines: c.array(Line).min(1) })
+  .refine("no line receives more than it ordered", order => order.lines.$all(line => line.received.$lte(line.quantity)));
+
+const report = await c.checkInvariants(
+  c.invariants("order lines", {
+    state: Order,
+    operations: [
+      { implementation: receiveImplementation, state: "order" },
+      { implementation: amendImplementation, state: "order" },
+    ],
+  }),
+  { runs: 100, steps: 10, seed: 1 },
+);
+```
+
+Each operation takes the state at the field `state` names in its input case, and answers the next state at the same field of its result; an answer without that field (a refusal) leaves the state as it was. `checkInvariants` draws a state that holds the invariants, then runs `steps` operations chosen at random, each on random values for the rest of its input, and does so `runs` times. Values are drawn from those `check` would try (bounds, borders and the constants the operations compare with), integers also between them, and arrays at any length up to eight past their lower bound, so that several items meet. The report is `held`, `broken` with the steps that led to the first state the invariants refuse (or the operation that failed, such as one answering a result its own schema refuses), or `not run` when no state holding the invariants was found; it says how often each operation ran and how often it moved the state. The same `seed` draws the same sequences. A run that finds nothing is evidence, not a proof, as sampled successes never are.
+
 ## Composition
 
 `c.compose(name, [firstImplementation, secondImplementation, ...more])` connects behaviors the way Souther's `>->` does: of the cases a stage answers, those the next stage takes as input flow on to it, and the rest depart the main line and are answered as they are. It takes the stages' implementations and returns the composition's declaration and its implementation together.
