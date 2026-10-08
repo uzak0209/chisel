@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as c from "../src/index.js";
 
 // Purchase orders, each DRAFT, APPROVED or ISSUED; an issued one receives.
@@ -452,6 +452,26 @@ describe("what a walk leaves unchecked", () => {
     expect(report.status).toBe("undetermined");
     expect(report.operations[0]).toMatchObject({ ran: 0, pending: 9 });
     expect(report.reason).toMatch(/^approve could not be run: /);
+  });
+
+  it("skips a whole-world operation at once when no input case takes the state at its field", async () => {
+    const Count = c.object({ count: c.int().min(0) });
+    const add = c.behavior("add", {
+      input: c.variants("kind", { add: c.object({ state: c.object({ count: c.int().min(0).max(3) }), by: c.int().min(1).max(5) }) }),
+      result: c.variants("outcome", { ok: c.object({ state: Count }) }),
+      effects: c.variants("type", {}),
+    });
+    const adding = c.implement(add, {
+      cases: { add: c.model("adds", r => ({ result: { outcome: "ok" as const, state: { count: c.arithmetic("add", r.state.count, r.by) } }, effects: [] })) },
+    });
+    const parse = vi.spyOn(add.input, "parse");
+    const report = await c.explore(
+      c.world("counting", { state: Count, initial: [{ count: 4 }], operations: [{ implementation: adding, state: "state" }], invariants: [c.invariant<c.Infer<typeof Count>>("not negative", state => state.count.$gte(0))] }),
+      { runs: 2, steps: 5 },
+    );
+    expect(report.operations[0]).toMatchObject({ ran: 0, skipped: 10 });
+    // A count of 4 is no state the case takes, so no input is drawn for it, let alone 200 per step.
+    expect(parse).not.toHaveBeenCalled();
   });
 
   it("refuses runs or steps that are not a positive integer", async () => {

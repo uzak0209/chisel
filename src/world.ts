@@ -407,7 +407,13 @@ function checks(condition: unknown, scope: unknown): boolean {
 // does not refuse the input.
 function inputFor(operation: { readonly implementation: AnyImplementation; readonly state: string }, state: unknown, constants: readonly unknown[], random: () => number): unknown {
   const schema = operation.implementation.behavior.input;
-  const tags = schema.variantTags.filter(tag => Object.hasOwn(schema.variants[tag]!.shape, operation.state));
+  // Only the cases whose field takes the state: drawing the rest of an input
+  // a case would refuse for its state alone could never succeed.
+  const tags = schema.variantTags.filter(tag => {
+    const shape = schema.variants[tag]!.shape;
+    return Object.hasOwn(shape, operation.state) && shape[operation.state]!.parse(state).success;
+  });
+  if (tags.length === 0) return undefined;
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     const tag = tags[Math.floor(random() * tags.length)]!;
     const { [operation.state]: _, ...others } = schema.variants[tag]!.shape;
