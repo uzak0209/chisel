@@ -257,6 +257,27 @@ describe("a world's invariants", () => {
     expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "below twenty" } });
   });
 
+  it("checks an explicit null at the state's field as the next state, rather than as the state left as it was", async () => {
+    const Count = c.object({ count: c.int().min(0) });
+    const clear = c.behavior("clear", {
+      input: c.variants("kind", { clear: c.object({ state: Count }) }),
+      result: c.variants("outcome", { cleared: c.object({ state: c.literal(null) }) }),
+      effects: c.variants("type", {}),
+    });
+    const clearing = c.implement(clear, { cases: { clear: c.model("clears", () => ({ result: { outcome: "cleared" as const, state: null }, effects: [] })) } });
+    const report = await c.explore(
+      c.world("counter", {
+        state: Count,
+        initial: [{ count: 0 }],
+        operations: [{ implementation: clearing, state: "state" }],
+        invariants: [c.invariant<c.Infer<typeof Count>>("not negative", state => state.count.$gte(0))],
+      }),
+      { runs: 1, steps: 1 },
+    );
+    expect(report).toMatchObject({ status: "broken", counterexample: { reason: "clear left a value that is not a state: $: Expected an object" } });
+    expect(report.counterexample!.steps).toMatchObject([{ before: { count: 0 }, after: null }]);
+  });
+
   it("draws the same walks from the same seed", async () => {
     const declaration = c.world("purchasing", { state: Orders, initial: [{ orders: [] }], operations: operations(changingAnyQuantity), invariants: [neverOverReceived] });
     expect(await c.explore(declaration, { seed: 3 })).toStrictEqual(await c.explore(declaration, { seed: 3 }));

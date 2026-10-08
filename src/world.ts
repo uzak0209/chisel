@@ -90,7 +90,8 @@ export interface Draw {
 
 // An operation over the whole world, taking the state at the input field
 // `state` names and answering the next one at the same field of its result
-// (an answer without it, a refusal, leaves the state as it was); the rest of
+// (an answer without it, a refusal, leaves the state as it was, while one
+// holding it, even as null, is checked as the next state); the rest of
 // its input is drawn at random. Or an operation over a part of the world,
 // such as one purchase order, with `input` building its input from the state
 // (undefined when it has nothing to act on) and `next` placing its answer
@@ -301,7 +302,7 @@ async function walk<T>(
       steps.push({ operation: name, input, before });
       return { broken: true, reason: `${name} failed: ${error instanceof Error ? error.message : String(error)}`, steps };
     }
-    const after: unknown = "state" in operation ? (fieldOf(execution.result, operation.state) ?? before) : operation.next(handed, execution, input);
+    const after: unknown = "state" in operation ? stateIn(execution.result, operation.state, before) : operation.next(handed, execution, input);
     seen.ran?.(index, !deepEqual(after, before));
     steps.push({ operation: name, input, before, result: execution.result, after });
     const parsed = declaration.state.parse(after);
@@ -427,8 +428,10 @@ function copyOf<V>(value: V): V {
   return value;
 }
 
-function fieldOf(value: unknown, field: string): unknown {
-  return typeof value === "object" && value !== null && Object.hasOwn(value, field) ? (value as Record<string, unknown>)[field] : undefined;
+// The state at the result's field, or the state before when the field is
+// absent; present, even as null, it is the next state.
+function stateIn(result: unknown, field: string, before: unknown): unknown {
+  return typeof result === "object" && result !== null && Object.hasOwn(result, field) ? (result as Record<string, unknown>)[field] : before;
 }
 
 const ATTEMPTS = 200;
