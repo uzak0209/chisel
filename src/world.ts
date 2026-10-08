@@ -147,6 +147,13 @@ export function world<T>(
         `${operation.implementation.behavior.name} takes no ${operation.state} in any input case, so it cannot be handed the state`,
       );
     }
+    // An answer without the field leaves the state as it was, so a result
+    // declaring it in no case would leave every walk where it started.
+    if (!answers(operation.implementation.behavior.result as AnySchema, operation.state)) {
+      throw new SpecificationError(
+        `${operation.implementation.behavior.name} answers no ${operation.state} in any result case, so it cannot hand back the next state`,
+      );
+    }
   }
   const initial = declaration.initial.map((state, index) => {
     const parsed = declaration.state.parse(state);
@@ -507,6 +514,19 @@ function copyOf<V>(value: V): V {
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copyOf(child)])) as V;
   }
   return value;
+}
+
+// Whether some value of the result can hold the field: an object declaring
+// it, a case of a sum declaring it, or what an optional holds.
+function answers(result: AnySchema, field: string): boolean {
+  switch (result.kind) {
+    case "object": return Object.hasOwn((result as ObjectSchema<ObjectShape>).shape, field);
+    case "variants": return Object.values((result as AnyVariantsSchema).variants).some(variant => answers(variant as AnySchema, field));
+    case "optional": return answers((result as OptionalSchema<unknown>).schema as AnySchema, field);
+    // A record may hold any key.
+    case "record": return true;
+    default: return false;
+  }
 }
 
 // The state at the result's field, or the state before when the field is

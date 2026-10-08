@@ -593,4 +593,18 @@ describe("declaring a world", () => {
     expect(() => c.world("w", { ...base, initial: [{ orders: [{ status: "DRAFT", id: "po-1", quantity: 0 }] }] })).toThrow(/World w starting state 1 is not a state/);
     expect(() => c.world("w", { ...base, operations: [{ implementation: approving, state: "orders" }] })).toThrow("approve takes no orders in any input case, so it cannot be handed the state");
   });
+  it("refuses a whole-world operation whose result never holds the state, which would leave every walk where it started", () => {
+    const Counter = c.object({ n: c.int().min(0).max(100) });
+    const step = c.behavior("step", {
+      input: c.variants("kind", { go: c.object({ state: Counter }) }),
+      result: c.variants("outcome", { ok: c.object({ next: Counter }) }),
+      effects: c.variants("type", {}),
+    });
+    const stepping = c.implement(step, {
+      cases: { go: c.model("jumps", r => ({ result: { outcome: "ok" as const, next: { n: c.arithmetic("add", r.state.n, 50) } }, effects: [] })) },
+    });
+    const small = c.invariant<c.Infer<typeof Counter>>("small", state => state.n.$lte(5));
+    expect(() => c.world("w", { state: Counter, initial: [{ n: 0 }], operations: [{ implementation: stepping, state: "state" }], invariants: [small] }))
+      .toThrow("step answers no state in any result case, so it cannot hand back the next state");
+  });
 });
