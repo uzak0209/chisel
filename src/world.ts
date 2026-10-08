@@ -201,7 +201,9 @@ export async function explore<T>(
   const report = { world: declaration.name, runs, steps: total, seed, operations: tally };
   const reasons = tally.flatMap((operation, index) =>
     operation.pending > 0 ? [`${operation.name} could not be run: ${unrun.get(index)}`]
-    : operation.ran === 0 ? [`${operation.name} never ran: it had nothing to act on in any state reached`]
+    : operation.ran === 0 && operation.skipped > 0 ? [`${operation.name} never ran: it had nothing to act on in any state reached`]
+    // Too few steps for the random choice to reach every operation.
+    : operation.ran === 0 ? [`${operation.name} never ran: no step chose it in ${runs * length} ${runs * length === 1 ? "step" : "steps"}`]
     : []);
   return reasons.length > 0 ? { ...report, status: "undetermined", reason: reasons.join("; ") } : { ...report, status: "held" };
 }

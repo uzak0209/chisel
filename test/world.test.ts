@@ -227,6 +227,18 @@ describe("what a walk leaves unchecked", () => {
     expect(report.reason).toBe("approve never ran: it had nothing to act on in any state reached");
   });
 
+  it("tells an operation no step chose from one that had nothing to act on", async () => {
+    const report = await c.explore(
+      c.world("purchasing", { state: Orders, initial: [{ orders: [] }], operations: operations(changingAboveReceived), invariants: [neverOverReceived] }),
+      { runs: 1, steps: 1 },
+    );
+    expect(report.status).toBe("undetermined");
+    const unchosen = report.operations.filter(operation => operation.ran === 0 && operation.skipped === 0);
+    expect(unchosen.length).toBeGreaterThan(0);
+    for (const operation of unchosen) expect(report.reason).toContain(`${operation.name} never ran: no step chose it in 1 step`);
+    expect(report.reason).not.toMatch(/nothing to act on/);
+  });
+
   it("counts a case still todo as pending, not as a broken invariant", async () => {
     const pendingApproval = c.implement(approve, { cases: { DRAFT: c.todo("approval rules"), $default: c.model("only a draft is approved", () => refused) } });
     const report = await c.explore(
