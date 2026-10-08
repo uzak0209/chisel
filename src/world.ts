@@ -142,7 +142,8 @@ export function world<T>(
   for (const operation of declaration.operations) {
     if (!("state" in operation)) continue;
     const input = operation.implementation.behavior.input;
-    if (!input.variantTags.some(tag => Object.hasOwn(input.variants[tag]!.shape, operation.state))) {
+    // The input sum's discriminant takes the state as the case it names.
+    if (input.discriminant !== operation.state && !input.variantTags.some(tag => Object.hasOwn(input.variants[tag]!.shape, operation.state))) {
       throw new SpecificationError(
         `${operation.implementation.behavior.name} takes no ${operation.state} in any input case, so it cannot be handed the state`,
       );
@@ -482,8 +483,10 @@ function checks(condition: unknown, scope: unknown): boolean {
 function inputFor(operation: { readonly implementation: AnyImplementation; readonly state: string }, state: unknown, constants: readonly unknown[], random: () => number): unknown {
   const schema = operation.implementation.behavior.input;
   // Only the cases whose field takes the state: drawing the rest of an input
-  // a case would refuse for its state alone could never succeed.
+  // a case would refuse for its state alone could never succeed. When the
+  // field is the discriminant, the state is the tag of the one case it names.
   const tags = schema.variantTags.filter(tag => {
+    if (schema.discriminant === operation.state) return tag === state;
     const shape = schema.variants[tag]!.shape;
     return Object.hasOwn(shape, operation.state) && shape[operation.state]!.parse(state).success;
   });

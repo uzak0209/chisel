@@ -622,4 +622,23 @@ describe("declaring a world", () => {
     const report = await c.explore(c.world("door", { state: Status, initial: ["open"], operations: [{ implementation: closing, state: "status" }], invariants: [staysOpen] }));
     expect(report.status).toBe("broken");
   });
+
+  it("hands the state to the input case its discriminant names when the operation names the discriminant", async () => {
+    const Status = c.enum(["open", "closed"]);
+    const close = c.behavior("close", {
+      input: c.variants("status", { open: c.object({}), closed: c.object({}) }),
+      result: c.variants("status", { closed: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const closing = c.implement(close, {
+      cases: {
+        open: c.model("closes", () => ({ result: { status: "closed" as const }, effects: [] })),
+        closed: c.model("stays", () => ({ result: { status: "closed" as const }, effects: [] })),
+      },
+    });
+    const staysOpen = c.invariant<"open" | "closed">("staysOpen", status => status.$eq("open"));
+    const report = await c.explore(c.world("door", { state: Status, initial: ["open"], operations: [{ implementation: closing, state: "status" }], invariants: [staysOpen] }));
+    expect(report.status).toBe("broken");
+    expect(report.counterexample?.steps[0]?.input).toStrictEqual({ status: "open" });
+  });
 });
