@@ -258,6 +258,22 @@ describe("a world's invariants", () => {
     expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "never lowers", reason: "lower moved items { n: 1 } in a way never lowers does not allow" } });
   });
 
+  it("leaves out a record of a record that does not name itself by the field, as it leaves out an element of an array", async () => {
+    // Only the entry at a names itself, b; the entry at key b names nothing.
+    const Entry = c.object({ id: c.string().optional(), v: c.int() });
+    const State = c.object({ entries: c.record(Entry), n: c.int() });
+    const report = await c.explore(
+      c.world("entries", {
+        state: State,
+        initial: [{ entries: { a: { id: "b", v: 1 }, b: { v: 2 } }, n: 0 }],
+        operations: [{ implementation: creating, input: () => ({ kind: "create", id: "po-1", quantity: 1 }), next: state => ({ ...state, n: state.n + 1 }) }],
+        transitions: [c.transition<c.Infer<typeof Entry>>("never lowers", { each: "entries", by: "id" }, (before, after) => after.v.$gte(before.v))],
+      }),
+      { runs: 1, steps: 1 },
+    );
+    expect(report.status).toBe("held");
+  });
+
   it("takes an invariant written as a model expression", async () => {
     const counted = c.invariant<OrdersState>("at most five orders", state =>
       c.bind(c.int(), c.fold(Order, c.int(), state.orders, 0, count => c.arithmetic("add", count, 1)), count => c.choose(count.$lte(5), true, false)),

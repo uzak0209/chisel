@@ -458,7 +458,16 @@ function recordsAt(item: Transition, state: unknown): (readonly [unknown, unknow
       if (key !== undefined) records.push([key, element]);
     }
   } else if (typeof value === "object" && value !== null) {
-    for (const [key, entry] of Object.entries(value)) records.push([each.by === undefined ? key : ((entry as Record<string, unknown>)?.[each.by] ?? key), entry]);
+    // With `by`, a record names itself by that field, as an element does, and
+    // one that does not is left out: its key is no value of that field, and
+    // taken as one it could clash with a record that does name itself.
+    for (const [key, entry] of Object.entries(value)) {
+      if (each.by === undefined) records.push([key, entry]);
+      else {
+        const named = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>)[each.by] : undefined;
+        if (named !== undefined) records.push([named, entry]);
+      }
+    }
   }
   return records;
 }
