@@ -14,7 +14,7 @@ import { formatTypeScriptValue } from "./codegen.js";
 import { deepEqual } from "./equal.js";
 import { interpret, nodeOf } from "./model.js";
 import type { Condition, Rule, TermOf } from "./rule.js";
-import { holds, rootTerm, selfTerm } from "./rule.js";
+import { holds, isDecimal, rootTerm, selfTerm } from "./rule.js";
 import { object } from "./schema.js";
 import { externalsIn, positiveLimit } from "./specification.js";
 import type {
@@ -509,9 +509,12 @@ function guardsOf(implementation: AnyImplementation): Rule[] {
 }
 
 // A copy of a state whose objects and arrays can be changed without touching
-// the original. Decimal, Rational and Temporal values cannot be changed in
-// place, so they are shared rather than copied.
+// the original. A Decimal keeps its digits in an array a callback can change,
+// so it is copied with them, through its own constructor so that another copy
+// of decimal.js is kept; Rational and Temporal values cannot be changed in
+// place, so they are shared.
 function copyOf<V>(value: V): V {
+  if (isDecimal(value)) return new (value.constructor as new (from: unknown) => V)(value);
   if (Array.isArray(value)) return value.map(copyOf) as V;
   if (value !== null && typeof value === "object" && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copyOf(child)])) as V;

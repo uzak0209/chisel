@@ -1,3 +1,4 @@
+import { Decimal } from "decimal.js";
 import { describe, expect, it, vi } from "vitest";
 import * as c from "../src/index.js";
 
@@ -499,6 +500,27 @@ describe("a world's invariants", () => {
       // Shortening replays from the start, so it keeps the three steps that reach three.
       expect(report).toMatchObject({ status: "broken", runs: 1, operations: [{ ran: 3, moved: 3 }], counterexample: { invariant: "below three", start: { count: 0 } } });
       expect(report.counterexample!.steps.map(step => step.before)).toStrictEqual([{ count: 0 }, { count: 1 }, { count: 2 }]);
+    });
+
+    it("hands a copy of a decimal too, so changing its digits in place leaves the state before as it was", async () => {
+      const Amount = c.object({ n: c.decimal(0) });
+      type AmountState = c.Infer<typeof Amount>;
+      const raising: c.Operation<AmountState> = {
+        implementation: ticking,
+        input: () => ({ kind: "tick" }),
+        // decimal.js keeps a value's digits in `d`; this raises 1 to 2 in place.
+        next: state => { (state.n as unknown as { d: number[] }).d[0]!++; return state; },
+      };
+      const declaration = c.world("amount", {
+        state: Amount,
+        initial: [{ n: new Decimal(1) }],
+        operations: [raising],
+        transitions: [c.transition<AmountState>("never grows", (before, after) => after.n.$lte(before.n))],
+      });
+      const report = await c.explore(declaration, { runs: 1, steps: 1 });
+      expect(report).toMatchObject({ status: "broken", operations: [{ moved: 1 }], counterexample: { invariant: "never grows" } });
+      expect(String(declaration.initial[0]!.n)).toBe("1");
+      expect(report.counterexample!.steps.map(step => [String((step.before as AmountState).n), String((step.after as AmountState).n)])).toStrictEqual([["1", "2"]]);
     });
   });
 });
