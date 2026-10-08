@@ -304,6 +304,31 @@ describe("a world's invariants", () => {
     await expect(c.explore(declaration(1.2, 1.8), { runs: 1, steps: 1 })).rejects.toThrow("draw.int has no integer from 1.2 to 1.8");
   });
 
+  it("does not count a next state that differs only by an optional field written as undefined as moved", async () => {
+    const Noted = c.object({ count: c.int().min(0), note: c.string().optional() });
+    const tick = c.behavior("tick", {
+      input: c.variants("kind", { tick: c.object({}) }),
+      result: c.variants("outcome", { ok: c.object({ note: c.string().optional() }) }),
+      effects: c.variants("type", {}),
+    });
+    const ticking = c.implement(tick, { cases: { tick: c.model("ticks", () => ({ result: { outcome: "ok" as const }, effects: [] })) } });
+    const report = await c.explore(
+      c.world("counter", {
+        state: Noted,
+        initial: [{ count: 0 }],
+        operations: [{
+          implementation: ticking,
+          input: () => ({ kind: "tick" }),
+          // As a JavaScript `next` might, writing the note it did not get as undefined.
+          next: (state, execution) => ({ ...state, note: (execution.result as { note?: string }).note }) as c.Infer<typeof Noted>,
+        }],
+        invariants: [c.invariant<c.Infer<typeof Noted>>("not negative", state => state.count.$gte(0))],
+      }),
+      { runs: 1, steps: 3 },
+    );
+    expect(report.operations).toStrictEqual([{ name: "tick", ran: 3, moved: 0, skipped: 0, pending: 0 }]);
+  });
+
   it("reports a starting state that breaks an invariant", async () => {
     const report = await c.explore(
       c.world("purchasing", {

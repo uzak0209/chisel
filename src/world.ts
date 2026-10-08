@@ -309,9 +309,11 @@ async function walk<T>(
       return { broken: true, reason: `${name} failed: ${error instanceof Error ? error.message : String(error)}`, steps };
     }
     const after: unknown = "state" in operation ? stateIn(execution.result, operation.state, before) : operation.next(handed, execution, input);
-    seen.ran?.(index, !deepEqual(after, before));
     steps.push({ operation: name, input, before, result: execution.result, after });
     const parsed = declaration.state.parse(after);
+    // Moved as the transitions see it: the state the schema reads, so an
+    // optional field written as undefined does not count as a change.
+    seen.ran?.(index, !parsed.success || !deepEqual(parsed.value, before));
     if (!parsed.success) {
       return { broken: true, reason: `${name} left a value that is not a state: ${parsed.issues.map(issue => `${issue.path}: ${issue.message}`).join("; ")}`, steps };
     }
