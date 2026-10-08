@@ -223,6 +223,40 @@ describe("a world's invariants", () => {
     ).rejects.toThrow("Transition an issued order stays issued pairs the elements of orders but names no field to match them by");
   });
 
+  // The first item goes down; a transition pairing by key must see it.
+  const lowering = (Key: c.Schema<unknown>) => {
+    const lower = c.behavior("lower", {
+      input: c.variants("kind", { lower: c.object({ v: c.int() }) }),
+      result: c.variants("outcome", { ok: c.object({ v: c.int() }) }),
+      effects: c.variants("type", {}),
+    });
+    const Item = c.object({ key: Key, v: c.int() });
+    const State = c.object({ items: c.array(Item) });
+    return (initial: readonly c.Infer<typeof State>[]) => c.world("items", {
+      state: State,
+      initial,
+      operations: [{
+        implementation: c.implement(lower, { cases: { lower: c.model("one less", r => ({ result: { outcome: "ok" as const, v: c.arithmetic("subtract", r.v, 1) }, effects: [] })) } }),
+        input: state => ({ kind: "lower", v: state.items[0]!.v }),
+        next: (state, execution) => ({ items: [{ ...state.items[0]!, v: (execution.result as { v: number }).v }, ...state.items.slice(1)] }),
+      }],
+      transitions: [c.transition<c.Infer<typeof Item>>("never lowers", { each: "items", by: "key" }, (before, after) => after.v.$gte(before.v))],
+    });
+  };
+
+  it("does not pair two records with one key", async () => {
+    const report = await c.explore(lowering(c.string())([{ items: [{ key: "a", v: 1 }, { key: "a", v: 5 }] }]), { runs: 1, steps: 1 });
+    expect(report).toMatchObject({
+      status: "broken",
+      counterexample: { invariant: "never lowers", reason: "lower moved a state where items holds two records named a, so never lowers cannot pair them" },
+    });
+  });
+
+  it("pairs records by a key that is an object by its value", async () => {
+    const report = await c.explore(lowering(c.object({ n: c.int() }))([{ items: [{ key: { n: 1 }, v: 1 }, { key: { n: 2 }, v: 5 }] }]), { runs: 1, steps: 1 });
+    expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "never lowers", reason: "lower moved items { n: 1 } in a way never lowers does not allow" } });
+  });
+
   it("takes an invariant written as a model expression", async () => {
     const counted = c.invariant<OrdersState>("at most five orders", state =>
       c.bind(c.int(), c.fold(Order, c.int(), state.orders, 0, count => c.arithmetic("add", count, 1)), count => c.choose(count.$lte(5), true, false)),

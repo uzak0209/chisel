@@ -10,6 +10,7 @@
 import type { AnyImplementation } from "./behavior.js";
 import { perform, SpecificationError, TodoDecision } from "./behavior.js";
 import { constantsOf, domainOf, integralBounds } from "./domain.js";
+import { formatTypeScriptValue } from "./codegen.js";
 import { deepEqual } from "./equal.js";
 import { interpret, nodeOf } from "./model.js";
 import type { Condition, Rule, TermOf } from "./rule.js";
@@ -59,7 +60,8 @@ export function invariant<T>(name: string, condition: (state: TermOf<T>) => Chec
 // before and after: the records at the field `each` names (a dotted path),
 // an array matched by the field `by`, or a record matched by its keys, are
 // paired by what names them, and each pair that changed is held to it; a
-// record only before or only after is not paired.
+// record only before or only after is not paired, and a state holding two
+// records with one key breaks it, since they cannot be paired.
 export function transition<T>(name: string, condition: (before: TermOf<T>, after: TermOf<T>) => Check): Transition;
 export function transition<E>(
   name: string,
@@ -325,8 +327,8 @@ async function walk<T>(
     const brokenInvariant = declaration.invariants.find(item => !checks(item.holds, parsed.value));
     if (brokenInvariant) return { broken: true, invariant: brokenInvariant.name, reason: `${name} reached a state that does not hold ${brokenInvariant.name}`, steps };
     for (const item of declaration.transitions) {
-      const refused = refusedBy(item, before, parsed.value);
-      if (refused !== undefined) return { broken: true, invariant: item.name, reason: `${name} moved ${refused} in a way ${item.name} does not allow`, steps };
+      const refused = refusedBy(item, name, before, parsed.value);
+      if (refused !== undefined) return { broken: true, invariant: item.name, reason: refused, steps };
     }
     state = parsed.value;
   }
@@ -359,36 +361,57 @@ async function shorten<T>(declaration: World<T>, start: T, plans: readonly Plan[
   return { ...shortest, steps: shortest.steps.filter(step => step.input !== undefined) };
 }
 
-// What a step moved that the transition does not allow ("the state", or one
-// record named by its key), or undefined when it allows every change. A pair
-// that did not change is not held to it.
-function refusedBy(item: Transition, before: unknown, after: unknown): string | undefined {
+// Why the step breaks the transition (it moved "the state", or one record
+// named by its key, in a way the transition does not allow, or left two
+// records with one key, which cannot be paired), or undefined when it allows
+// the step. A pair that did not change is not held to it.
+function refusedBy(item: Transition, operation: string, before: unknown, after: unknown): string | undefined {
   if (deepEqual(before, after)) return undefined;
-  if (item.each === undefined) return checks(item.holds, { before, after }) ? undefined : "the state";
+  const moved = (what: string) => `${operation} moved ${what} in a way ${item.name} does not allow`;
+  if (item.each === undefined) return checks(item.holds, { before, after }) ? undefined : moved("the state");
   const earlier = recordsAt(item, before), later = recordsAt(item, after);
+  const repeated = repeatedKey(earlier) ?? repeatedKey(later);
+  if (repeated !== undefined) {
+    return `${operation} moved a state where ${item.each.path.join(".")} holds two records named ${labelOf(repeated.key)}, so ${item.name} cannot pair them`;
+  }
   for (const [key, was] of earlier) {
-    if (!later.has(key)) continue;
-    const is = later.get(key);
+    const pair = later.find(([other]) => deepEqual(other, key));
+    if (pair === undefined) continue;
+    const is = pair[1];
     if (deepEqual(was, is)) continue;
-    if (!checks(item.holds, { before: was, after: is })) return `${item.each.path.join(".")} ${key}`;
+    if (!checks(item.holds, { before: was, after: is })) return moved(`${item.each.path.join(".")} ${labelOf(key)}`);
   }
   return undefined;
 }
 
-// The records at the transition's field, by what names each of them.
-function recordsAt(item: Transition, state: unknown): Map<string, unknown> {
+// The first key two of the records share, compared as values, so that two
+// distinct keys that are objects are not taken as one.
+function repeatedKey(records: readonly (readonly [unknown, unknown])[]): { readonly key: unknown } | undefined {
+  for (let index = 0; index < records.length; index++) {
+    if (records.slice(0, index).some(([key]) => deepEqual(key, records[index]![0]))) return { key: records[index]![0] };
+  }
+  return undefined;
+}
+
+// A key as the report names it, on one line.
+function labelOf(key: unknown): string {
+  return typeof key === "string" ? key : formatTypeScriptValue(key).replace(/,\n\s*([}\]])/g, " $1").replace(/\n\s*/g, " ");
+}
+
+// The records at the transition's field, each with what names it.
+function recordsAt(item: Transition, state: unknown): (readonly [unknown, unknown])[] {
   const each = item.each!;
   let value: unknown = state;
   for (const key of each.path) value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
-  const records = new Map<string, unknown>();
+  const records: (readonly [unknown, unknown])[] = [];
   if (Array.isArray(value)) {
     if (each.by === undefined) throw new SpecificationError(`Transition ${item.name} pairs the elements of ${each.path.join(".")} but names no field to match them by`);
     for (const element of value) {
       const key = typeof element === "object" && element !== null ? (element as Record<string, unknown>)[each.by] : undefined;
-      if (key !== undefined) records.set(String(key), element);
+      if (key !== undefined) records.push([key, element]);
     }
   } else if (typeof value === "object" && value !== null) {
-    for (const [key, entry] of Object.entries(value)) records.set(each.by === undefined ? key : String((entry as Record<string, unknown>)?.[each.by] ?? key), entry);
+    for (const [key, entry] of Object.entries(value)) records.push([each.by === undefined ? key : ((entry as Record<string, unknown>)?.[each.by] ?? key), entry]);
   }
   return records;
 }
