@@ -471,6 +471,8 @@ function sampler(schema: AnySchema, constants: readonly unknown[], random: () =>
       }
       case "variants": {
         const sum = current as AnyVariantsSchema;
+        // A sum with no case holds no value.
+        if (sum.variantTags.length === 0) return undefined;
         const tag = pick(sum.variantTags);
         return { [sum.discriminant]: tag, ...(draw(sum.variants[tag]!) as object) };
       }

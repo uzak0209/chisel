@@ -304,6 +304,35 @@ describe("a world's invariants", () => {
     await expect(c.explore(declaration(1.2, 1.8), { runs: 1, steps: 1 })).rejects.toThrow("draw.int has no integer from 1.2 to 1.8");
   });
 
+  it("draws no value of a sum with no case, rather than failing", async () => {
+    const Count = c.object({ count: c.int().min(0) });
+    const tick = c.behavior("tick", {
+      input: c.variants("kind", { tick: c.object({}) }),
+      result: c.variants("outcome", { ok: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const ticking = c.implement(tick, { cases: { tick: c.model("ticks", () => ({ result: { outcome: "ok" as const }, effects: [] })) } });
+    const drawn: unknown[] = [];
+    const report = await c.explore(
+      c.world("counter", {
+        state: Count,
+        initial: [{ count: 0 }],
+        operations: [{
+          implementation: ticking,
+          input: (_, draw) => {
+            drawn.push(draw.value(c.variants("type", {})), draw.value(c.object({ effect: c.variants("type", {}).optional() })));
+            return { kind: "tick" };
+          },
+          next: state => state,
+        }],
+        invariants: [c.invariant<c.Infer<typeof Count>>("not negative", state => state.count.$gte(0))],
+      }),
+      { runs: 1, steps: 1 },
+    );
+    expect(report.status).toBe("held");
+    expect(drawn).toStrictEqual([undefined, {}]);
+  });
+
   it("does not count a next state that differs only by an optional field written as undefined as moved", async () => {
     const Noted = c.object({ count: c.int().min(0), note: c.string().optional() });
     const tick = c.behavior("tick", {
