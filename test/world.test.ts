@@ -474,10 +474,15 @@ describe("what a walk leaves unchecked", () => {
     expect(parse).not.toHaveBeenCalled();
   });
 
-  it("refuses runs or steps that are not a positive integer", async () => {
+  it("refuses runs or steps that are not a positive integer, and a seed the random source cannot tell apart", async () => {
     const declaration = c.world("purchasing", { state: Orders, initial: [{ orders: [] }], operations: operations(changingAboveReceived), invariants: [neverOverReceived] });
     await expect(c.explore(declaration, { runs: 0 })).rejects.toThrow("runs must be a positive integer, but was 0");
     await expect(c.explore(declaration, { steps: Number.NaN })).rejects.toThrow("steps must be a positive integer, but was NaN");
+    // Seeds the random source reads alike would draw the same walks under different names.
+    await expect(c.explore(declaration, { seed: Number.NaN })).rejects.toThrow("seed must be an integer from 0 to 4294967295, but was NaN");
+    await expect(c.explore(declaration, { seed: 1.5 })).rejects.toThrow("seed must be an integer from 0 to 4294967295, but was 1.5");
+    await expect(c.explore(declaration, { seed: -1 })).rejects.toThrow("seed must be an integer from 0 to 4294967295, but was -1");
+    await expect(c.explore(declaration, { seed: 2 ** 32 })).rejects.toThrow("seed must be an integer from 0 to 4294967295, but was 4294967296");
   });
 });
 

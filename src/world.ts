@@ -196,6 +196,11 @@ export async function explore<T>(
   const runs = positiveLimit("runs", options.runs, 100);
   const length = positiveLimit("steps", options.steps, 20);
   const seed = options.seed ?? 1;
+  // The random source reads a seed as 32 unsigned bits, so any other number
+  // would draw the walks of another seed while the report shows its own.
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
+    throw new SpecificationError(`seed must be an integer from 0 to 4294967295, but was ${seed}`);
+  }
   const main = mulberry32(seed);
   const tally = declaration.operations.map(operation => ({ name: operation.name ?? operation.implementation.behavior.name, ran: 0, moved: 0, skipped: 0, pending: 0 }));
   // Why an operation could not be run where it was reached, by its index.
