@@ -273,6 +273,50 @@ describe("a world's invariants", () => {
     );
     expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "no order receives more than it ordered", steps: [] } });
   });
+
+  describe("an operation whose next changes the state it is handed", () => {
+    const Count = c.object({ count: c.int().min(0) });
+    type CountState = c.Infer<typeof Count>;
+    const tick = c.behavior("tick", {
+      input: c.variants("kind", { tick: c.object({}) }),
+      result: c.variants("outcome", { ok: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const ticking = c.implement(tick, { cases: { tick: c.model("ticks", () => ({ result: { outcome: "ok" as const }, effects: [] })) } });
+    const incrementing: c.Operation<CountState> = {
+      implementation: ticking,
+      input: () => ({ kind: "tick" }),
+      next: state => { (state as { count: number }).count++; return state; },
+    };
+
+    it("keeps the state before the step, so a transition sees what it was", async () => {
+      const report = await c.explore(
+        c.world("counter", {
+          state: Count,
+          initial: [{ count: 0 }],
+          operations: [incrementing],
+          transitions: [c.transition<CountState>("never grows", (before, after) => after.count.$lte(before.count))],
+        }),
+        { runs: 1, steps: 1 },
+      );
+      expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "never grows", start: { count: 0 } } });
+      expect(report.counterexample!.steps).toMatchObject([{ before: { count: 0 }, after: { count: 1 } }]);
+    });
+
+    it("starts every walk and every replay from the starting state as declared", async () => {
+      const declaration = c.world("counter", {
+        state: Count,
+        initial: [{ count: 0 }],
+        operations: [incrementing],
+        invariants: [c.invariant<CountState>("below three", state => state.count.$lt(3))],
+      });
+      const report = await c.explore(declaration, { runs: 3, steps: 3 });
+      expect(declaration.initial).toStrictEqual([{ count: 0 }]);
+      // Shortening replays from the start, so it keeps the three steps that reach three.
+      expect(report).toMatchObject({ status: "broken", runs: 1, operations: [{ ran: 3, moved: 3 }], counterexample: { invariant: "below three", start: { count: 0 } } });
+      expect(report.counterexample!.steps.map(step => step.before)).toStrictEqual([{ count: 0 }, { count: 1 }, { count: 2 }]);
+    });
+  });
 });
 
 describe("what a walk leaves unchecked", () => {

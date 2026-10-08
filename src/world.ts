@@ -276,7 +276,11 @@ async function walk<T>(
       steps.push({ operation: name, input: undefined, before: state, after: state });
       continue;
     }
-    const input = "state" in operation ? inputFor(operation, state, constants, random) : operation.input(state, draw);
+    // The callbacks are handed a copy, so one that changes the state in place
+    // leaves the state before the step, and the starting state, as they were.
+    // `input` and `next` share it, so `next` can find what `input` picked.
+    const handed = copyOf(state);
+    const input = "state" in operation ? inputFor(operation, handed, constants, random) : operation.input(handed, draw);
     if (input === undefined) {
       seen.skipped?.(index);
       steps.push({ operation: name, input: undefined, before: state, after: state });
@@ -297,8 +301,8 @@ async function walk<T>(
       steps.push({ operation: name, input, before });
       return { broken: true, reason: `${name} failed: ${error instanceof Error ? error.message : String(error)}`, steps };
     }
-    const after: unknown = "state" in operation ? (fieldOf(execution.result, operation.state) ?? before) : operation.next(before, execution, input);
-    seen.ran?.(index, after !== before);
+    const after: unknown = "state" in operation ? (fieldOf(execution.result, operation.state) ?? before) : operation.next(handed, execution, input);
+    seen.ran?.(index, !deepEqual(after, before));
     steps.push({ operation: name, input, before, result: execution.result, after });
     const parsed = declaration.state.parse(after);
     if (!parsed.success) {
@@ -410,6 +414,17 @@ function guardsOf(implementation: AnyImplementation): Rule[] {
   return Object.values(implementation.cases).flatMap(decision =>
     decision !== undefined && decision.kind === "rules" ? decision.guards.map(guard => guard.condition) : [],
   );
+}
+
+// A copy of a state whose objects and arrays can be changed without touching
+// the original. Decimal, Rational and Temporal values cannot be changed in
+// place, so they are shared rather than copied.
+function copyOf<V>(value: V): V {
+  if (Array.isArray(value)) return value.map(copyOf) as V;
+  if (value !== null && typeof value === "object" && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, copyOf(child)])) as V;
+  }
+  return value;
 }
 
 function fieldOf(value: unknown, field: string): unknown {
