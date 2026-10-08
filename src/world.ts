@@ -353,11 +353,15 @@ async function walk<T>(
 async function shorten<T>(declaration: World<T>, start: T, plans: readonly Plan[], found: Extract<Walked, { broken: true }>): Promise<Extract<Walked, { broken: true }>> {
   const same = (walked: Walked): walked is Extract<Walked, { broken: true }> =>
     walked.broken && walked.invariant === found.invariant && (found.invariant !== undefined || walked.reason === found.reason);
+  // Past the numbers a step drew, a replay draws on from a seeded source
+  // rather than one constant, so that a callback drawing until a value suits
+  // the shorter walk's state (an id not yet taken) still finds one.
   const replay = (kept: readonly Plan[]) =>
     walk(declaration, start, kept.length, step => {
       const tape = kept[step]!.tape;
+      const more = mulberry32(step);
       let next = 0;
-      return { index: kept[step]!.index, random: () => (next < tape.length ? tape[next++]! : 0) };
+      return { index: kept[step]!.index, random: () => (next < tape.length ? tape[next++]! : more()) };
     });
   let kept = [...plans];
   let shortest = found;

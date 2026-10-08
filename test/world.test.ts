@@ -317,6 +317,45 @@ describe("a world's invariants", () => {
     expect(await c.explore(declaration, { seed: 3 })).toStrictEqual(await c.explore(declaration, { seed: 3 }));
   });
 
+  it("shortens a walk whose operation draws until a value suits the state, though the numbers it drew run out", async () => {
+    const Ids = c.object({ ids: c.array(c.int()) });
+    type IdsState = c.Infer<typeof Ids>;
+    const act = c.behavior("act", {
+      input: c.variants("kind", { add: c.object({ id: c.int() }), remove: c.object({ id: c.int() }) }),
+      result: c.variants("outcome", { ok: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const acting = c.implement(act, { cases: { $default: c.model("acts", () => ({ result: { outcome: "ok" as const }, effects: [] })) } } as never);
+    const report = await c.explore(
+      c.world("ids", {
+        state: Ids,
+        initial: [{ ids: [] }],
+        operations: [
+          {
+            name: "add",
+            implementation: acting,
+            // Draws until an id not yet taken; dropping a step that removed an id
+            // leaves it taken in the replay, past the numbers the step drew.
+            input: (state, draw) => {
+              if (state.ids.length >= 2) return undefined;
+              for (let attempt = 0; attempt < 1000; attempt++) {
+                const id = draw.int(1, 2);
+                if (!state.ids.includes(id)) return { kind: "add", id };
+              }
+              throw new Error("no free id in 1000 draws");
+            },
+            next: (state, _execution, input) => ({ ids: [...state.ids, (input as { id: number }).id] }),
+          },
+          { name: "remove", implementation: acting, input: state => (state.ids.length === 0 ? undefined : { kind: "remove", id: state.ids[0]! }), next: state => ({ ids: state.ids.slice(1) }) },
+        ],
+        invariants: [c.invariant<IdsState>("fewer than two", state => state.ids.$length().$lt(2))],
+      }),
+      { runs: 5, steps: 10, seed: 2 },
+    );
+    expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "fewer than two" } });
+    expect(report.counterexample!.steps.map(step => step.operation)).toStrictEqual(["add", "add"]);
+  });
+
   it("draws an integer between bounds that are not integers, and refuses bounds with none between them", async () => {
     const Count = c.object({ count: c.int().min(0) });
     const tick = c.behavior("tick", {
