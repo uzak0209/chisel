@@ -517,11 +517,12 @@ function copyOf<V>(value: V): V {
 }
 
 // Whether some value of the result can hold the field: an object declaring
-// it, a case of a sum declaring it, or what an optional holds.
+// it, a sum whose discriminant it is or one of whose cases declares it, or
+// what an optional holds.
 function answers(result: AnySchema, field: string): boolean {
   switch (result.kind) {
     case "object": return Object.hasOwn((result as ObjectSchema<ObjectShape>).shape, field);
-    case "variants": return Object.values((result as AnyVariantsSchema).variants).some(variant => answers(variant as AnySchema, field));
+    case "variants": return (result as AnyVariantsSchema).discriminant === field || Object.values((result as AnyVariantsSchema).variants).some(variant => answers(variant as AnySchema, field));
     case "optional": return answers((result as OptionalSchema<unknown>).schema as AnySchema, field);
     // A record may hold any key.
     case "record": return true;

@@ -607,4 +607,19 @@ describe("declaring a world", () => {
     expect(() => c.world("w", { state: Counter, initial: [{ n: 0 }], operations: [{ implementation: stepping, state: "state" }], invariants: [small] }))
       .toThrow("step answers no state in any result case, so it cannot hand back the next state");
   });
+
+  it("takes the next state from a result sum's discriminant when the operation names it", async () => {
+    const Status = c.enum(["open", "closed"]);
+    const toggle = c.behavior("toggle", {
+      input: c.variants("kind", { go: c.object({ status: Status }) }),
+      result: c.variants("status", { open: c.object({}), closed: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const closing = c.implement(toggle, {
+      cases: { go: c.model("closes", () => ({ result: { status: "closed" as const }, effects: [] })) },
+    });
+    const staysOpen = c.invariant<"open" | "closed">("staysOpen", status => status.$eq("open"));
+    const report = await c.explore(c.world("door", { state: Status, initial: ["open"], operations: [{ implementation: closing, state: "status" }], invariants: [staysOpen] }));
+    expect(report.status).toBe("broken");
+  });
 });
