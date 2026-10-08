@@ -10,6 +10,7 @@
 import type { AnyImplementation } from "./behavior.js";
 import { perform, SpecificationError, TodoDecision } from "./behavior.js";
 import { constantsOf, domainOf, integralBounds } from "./domain.js";
+import { deepEqual } from "./equal.js";
 import { interpret, nodeOf } from "./model.js";
 import type { Condition, Rule, TermOf } from "./rule.js";
 import { holds, rootTerm, selfTerm } from "./rule.js";
@@ -42,6 +43,9 @@ export interface Transition {
   readonly kind: "transition";
   readonly name: string;
   readonly holds: unknown;
+  // When the condition relates one record before and after, the field of
+  // the state holding the records and the field of a record naming it.
+  readonly each?: { readonly path: readonly string[]; readonly by?: string };
 }
 
 // Holds of every state the world reaches.
@@ -49,9 +53,29 @@ export function invariant<T>(name: string, condition: (state: TermOf<T>) => Chec
   return { kind: "invariant", name, holds: condition(selfTerm<T>()) };
 }
 
-// Holds between the state before an operation and the state after it.
-export function transition<T>(name: string, condition: (before: TermOf<T>, after: TermOf<T>) => Check): Transition {
-  return { kind: "transition", name, holds: condition(rootTerm<T>("before"), rootTerm<T>("after")) };
+// Holds between the state before an operation and the state after it, as
+// an action property `[][P]_vars` of TLA+ does: a step that leaves the state
+// as it was is not held to it. With `each`, the condition relates one record
+// before and after: the records at the field `each` names (a dotted path),
+// an array matched by the field `by`, or a record matched by its keys, are
+// paired by what names them, and each pair that changed is held to it; a
+// record only before or only after is not paired.
+export function transition<T>(name: string, condition: (before: TermOf<T>, after: TermOf<T>) => Check): Transition;
+export function transition<E>(
+  name: string,
+  each: { readonly each: string; readonly by?: string },
+  condition: (before: TermOf<E>, after: TermOf<E>) => Check,
+): Transition;
+export function transition(
+  name: string,
+  second: { readonly each: string; readonly by?: string } | ((before: never, after: never) => Check),
+  third?: (before: never, after: never) => Check,
+): Transition {
+  const condition = (typeof second === "function" ? second : third)!;
+  const holds = condition(rootTerm("before") as never, rootTerm("after") as never);
+  if (typeof second === "function") return { kind: "transition", name, holds };
+  if (second.each.length === 0) throw new SpecificationError(`Transition ${name} names no field to pair records in`);
+  return { kind: "transition", name, holds, each: { path: second.each.split("."), ...(second.by === undefined ? {} : { by: second.by }) } };
 }
 
 // What `input` is handed to draw the rest of an operation's input with.
@@ -282,8 +306,10 @@ async function walk<T>(
     }
     const brokenInvariant = declaration.invariants.find(item => !checks(item.holds, parsed.value));
     if (brokenInvariant) return { broken: true, invariant: brokenInvariant.name, reason: `${name} reached a state that does not hold ${brokenInvariant.name}`, steps };
-    const brokenTransition = declaration.transitions.find(item => !checks(item.holds, { before, after: parsed.value }));
-    if (brokenTransition) return { broken: true, invariant: brokenTransition.name, reason: `${name} moved the state in a way ${brokenTransition.name} does not allow`, steps };
+    for (const item of declaration.transitions) {
+      const refused = refusedBy(item, before, parsed.value);
+      if (refused !== undefined) return { broken: true, invariant: item.name, reason: `${name} moved ${refused} in a way ${item.name} does not allow`, steps };
+    }
     state = parsed.value;
   }
   return { broken: false, steps };
@@ -313,6 +339,40 @@ async function shorten<T>(declaration: World<T>, start: T, plans: readonly Plan[
     }
   }
   return { ...shortest, steps: shortest.steps.filter(step => step.input !== undefined) };
+}
+
+// What a step moved that the transition does not allow ("the state", or one
+// record named by its key), or undefined when it allows every change. A pair
+// that did not change is not held to it.
+function refusedBy(item: Transition, before: unknown, after: unknown): string | undefined {
+  if (deepEqual(before, after)) return undefined;
+  if (item.each === undefined) return checks(item.holds, { before, after }) ? undefined : "the state";
+  const earlier = recordsAt(item, before), later = recordsAt(item, after);
+  for (const [key, was] of earlier) {
+    if (!later.has(key)) continue;
+    const is = later.get(key);
+    if (deepEqual(was, is)) continue;
+    if (!checks(item.holds, { before: was, after: is })) return `${item.each.path.join(".")} ${key}`;
+  }
+  return undefined;
+}
+
+// The records at the transition's field, by what names each of them.
+function recordsAt(item: Transition, state: unknown): Map<string, unknown> {
+  const each = item.each!;
+  let value: unknown = state;
+  for (const key of each.path) value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  const records = new Map<string, unknown>();
+  if (Array.isArray(value)) {
+    if (each.by === undefined) throw new SpecificationError(`Transition ${item.name} pairs the elements of ${each.path.join(".")} but names no field to match them by`);
+    for (const element of value) {
+      const key = typeof element === "object" && element !== null ? (element as Record<string, unknown>)[each.by] : undefined;
+      if (key !== undefined) records.set(String(key), element);
+    }
+  } else if (typeof value === "object" && value !== null) {
+    for (const [key, entry] of Object.entries(value)) records.set(each.by === undefined ? key : String((entry as Record<string, unknown>)?.[each.by] ?? key), entry);
+  }
+  return records;
 }
 
 const RULE_KINDS = new Set(["compare", "all", "any", "and", "or", "not"]);

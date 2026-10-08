@@ -164,6 +164,65 @@ describe("a world's invariants", () => {
     expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "no order is lost" } });
   });
 
+  it("pairs each record before and after by what names it, as TLA+ quantifies over orders[id] and orders'[id]", async () => {
+    const issuedStaysIssued = c.transition<OrderValue>("an issued order stays issued", { each: "orders", by: "id" }, (before, after) =>
+      before.status.$ne("ISSUED").$or(after.status.$eq("ISSUED")),
+    );
+    const reopen = c.behavior("reopen", { input: Order, result: answers, effects: c.variants("type", {}) });
+    // Sends an issued order back to a draft.
+    const reopening = c.implement(reopen, {
+      cases: {
+        ISSUED: c.model("reopens", r => ({ result: { outcome: "ok" as const, order: { status: "DRAFT" as const, id: r.id, quantity: r.quantity } }, effects: [] })),
+        $default: c.model("only an issued order reopens", () => refused),
+      },
+    });
+    const broken = await c.explore(
+      c.world("purchasing", {
+        state: Orders,
+        initial: [{ orders: [] }],
+        operations: [...operations(changingAboveReceived), onOrder(reopening)],
+        transitions: [issuedStaysIssued],
+      }),
+      { runs: 200, steps: 20 },
+    );
+    expect(broken.status).toBe("broken");
+    expect(broken.counterexample!.invariant).toBe("an issued order stays issued");
+    expect(broken.counterexample!.reason).toMatch(/^reopen moved orders po-\d+ in a way an issued order stays issued does not allow$/);
+    expect(broken.counterexample!.steps.map(step => step.operation)).toStrictEqual(["create", "approve", "issue", "reopen"]);
+
+    const held = await c.explore(
+      c.world("purchasing", { state: Orders, initial: [{ orders: [] }], operations: operations(changingAboveReceived), transitions: [issuedStaysIssued] }),
+      { runs: 50, steps: 20 },
+    );
+    expect(held.status).toBe("held");
+  });
+
+  it("does not hold a step that leaves the state as it was to a transition, as [][P]_vars does not", async () => {
+    // Every step that moves the state adds an order; issuing a draft is refused and moves nothing.
+    const growing = c.transition<OrdersState>("a step that moves the state adds an order", (before, after) =>
+      after.orders.$length().$gt(before.orders.$length()),
+    );
+    const report = await c.explore(
+      c.world("purchasing", {
+        state: Orders,
+        initial: [{ orders: [] }],
+        operations: [operations(changingAboveReceived)[0]!, onOrder(issuing)],
+        transitions: [growing],
+      }),
+      { runs: 20, steps: 10 },
+    );
+    expect(report.status).toBe("held");
+    expect(report.operations[1]).toMatchObject({ name: "issue", moved: 0 });
+    expect(report.operations[1]!.ran).toBeGreaterThan(0);
+  });
+
+  it("refuses to pair an array's elements without a field to match them by", async () => {
+    const unmatched = c.transition<OrderValue>("an issued order stays issued", { each: "orders" }, (before, after) => before.status.$ne("ISSUED").$or(after.status.$eq("ISSUED")));
+    await expect(
+      c.explore(c.world("purchasing", { state: Orders, initial: [{ orders: [] }], operations: operations(changingAboveReceived), transitions: [unmatched] })),
+    ).rejects.toThrow("Transition an issued order stays issued pairs the elements of orders but names no field to match them by");
+  });
+
   it("takes an invariant written as a model expression", async () => {
     const counted = c.invariant<OrdersState>("at most five orders", state =>
       c.bind(c.int(), c.fold(Order, c.int(), state.orders, 0, count => c.arithmetic("add", count, 1)), count => c.choose(count.$lte(5), true, false)),
