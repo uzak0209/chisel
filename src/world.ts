@@ -136,6 +136,9 @@ export function world<T>(
   const names = [...invariants, ...transitions].map(item => item.name);
   const repeated = names.find((item, index) => names.indexOf(item) !== index);
   if (repeated !== undefined) throw new SpecificationError(`World ${name} names invariant ${repeated} more than once`);
+  for (const item of transitions) {
+    if (item.each !== undefined) pairable(name, declaration.state as AnySchema, item);
+  }
   for (const operation of declaration.operations) {
     if (!("state" in operation)) continue;
     const input = operation.implementation.behavior.input;
@@ -396,6 +399,29 @@ function repeatedKey(records: readonly (readonly [unknown, unknown])[]): { reado
 // A key as the report names it, on one line.
 function labelOf(key: unknown): string {
   return typeof key === "string" ? key : formatTypeScriptValue(key).replace(/,\n\s*([}\]])/g, " $1").replace(/\n\s*/g, " ");
+}
+
+// Refuses a transition whose records the state does not hold where it looks,
+// or does not name by its field `by`: a misspelt path or field would leave
+// every step with no pair, and the transition would hold of every walk.
+function pairable(world: string, state: AnySchema, item: Transition): void {
+  const each = item.each!;
+  const unwrap = (schemas: readonly AnySchema[]): AnySchema[] =>
+    schemas.map(schema => (schema.kind === "optional" ? (schema as unknown as { schema: AnySchema }).schema : schema));
+  const fieldsOf = (schema: AnySchema, key: string): AnySchema[] =>
+    schema.kind === "object" ? (Object.hasOwn((schema as unknown as { shape: object }).shape, key) ? [(schema as unknown as { shape: Record<string, AnySchema> }).shape[key]!] : [])
+    : schema.kind === "variants" ? Object.values((schema as unknown as { variants: Record<string, AnySchema> }).variants).flatMap(variant => fieldsOf(variant, key))
+    : [];
+  let schemas = [state];
+  for (const key of each.path) schemas = unwrap(schemas).flatMap(schema => fieldsOf(schema, key));
+  const records = unwrap(schemas).filter(schema => schema.kind === "array" || schema.kind === "record");
+  const at = each.path.join(".");
+  if (records.length === 0) throw new SpecificationError(`World ${world}: transition ${item.name} pairs records at ${at}, where the state holds no array or record`);
+  if (each.by === undefined) return;
+  const by = each.by;
+  const named = unwrap(records.map(schema => (schema as unknown as { element?: AnySchema; value?: AnySchema }).element ?? (schema as unknown as { value: AnySchema }).value))
+    .some(schema => fieldsOf(schema, by).length > 0 || (schema.kind === "variants" && (schema as unknown as { discriminant: string }).discriminant === by));
+  if (!named) throw new SpecificationError(`World ${world}: transition ${item.name} pairs the records at ${at} by ${by}, which they do not declare`);
 }
 
 // The records at the transition's field, each with what names it.

@@ -522,6 +522,13 @@ describe("what a walk leaves unchecked", () => {
 
 describe("declaring a world", () => {
   const base = { state: Orders, initial: [{ orders: [] }] as OrdersState[], operations: operations(changingAboveReceived), invariants: [neverOverReceived] };
+  it("refuses a transition pairing records the state does not hold where it looks", () => {
+    const pairing = (each: string, by: string) => c.transition<OrderValue>("an issued order stays issued", { each, by }, (before, after) => before.status.$ne("ISSUED").$or(after.status.$eq("ISSUED")));
+    expect(() => c.world("w", { ...base, transitions: [pairing("order", "id")] })).toThrow("World w: transition an issued order stays issued pairs records at order, where the state holds no array or record");
+    expect(() => c.world("w", { ...base, transitions: [pairing("orders", "ID")] })).toThrow("World w: transition an issued order stays issued pairs the records at orders by ID, which they do not declare");
+    expect(() => c.world("w", { ...base, transitions: [pairing("orders", "id"), pairing("orders", "status")].map((item, index) => ({ ...item, name: `${index}` })) })).not.toThrow();
+  });
+
   it("refuses a world with no starting state, no operation or no invariant", () => {
     expect(() => c.world("w", { ...base, initial: [] })).toThrow("World w starts from no state");
     expect(() => c.world("w", { ...base, operations: [] })).toThrow("World w names no operation");
