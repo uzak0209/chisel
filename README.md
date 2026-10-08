@@ -409,6 +409,9 @@ Examples show that each behavior answers as its rows say. Some properties hold o
 A world declares the state its operations share, the states it starts from, the operations that move it, and what must hold of every state they reach, apart from the state's type: the type says what a state may hold, an invariant what a reachable state does hold.
 
 ```ts
+type State = c.Infer<typeof Orders>;
+type Order = State["orders"][number];
+
 const purchasing = c.world("purchasing", {
   state: Orders,
   initial: [{ orders: [] }],
@@ -418,11 +421,11 @@ const purchasing = c.world("purchasing", {
     { implementation: counting, state: "state" },
   ],
   invariants: [
-    c.invariant("no order receives more than it ordered", state => state.orders.$all(order => order.received.$lte(order.quantity))),
+    c.invariant<State>("no order receives more than it ordered", state => state.orders.$all(order => order.received.$lte(order.quantity))),
   ],
   transitions: [
-    c.transition("no order is lost", (before, after) => after.orders.$length().$gte(before.orders.$length())),
-    c.transition("a closed order stays closed", { each: "orders", by: "id" }, (before, after) =>
+    c.transition<State>("no order is lost", (before, after) => after.orders.$length().$gte(before.orders.$length())),
+    c.transition<Order>("a closed order stays closed", { each: "orders", by: "id" }, (before, after) =>
       before.status.$ne("CLOSED").$or(after.status.$eq("CLOSED"))),
   ],
 });
