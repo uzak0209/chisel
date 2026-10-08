@@ -189,8 +189,12 @@ function sampler(schema: AnySchema, constants: readonly unknown[], random: () =>
         return Array.from({ length: size }, () => draw(element));
       }
       case "record": {
+        // Any number of entries its length bounds allow, up to MAX_LENGTH past the lower one.
         const value = (current as RecordSchema<unknown>).value;
-        return Object.fromEntries(Array.from({ length: Math.floor(random() * 3) }, (_, index) => [`key${index}`, draw(value)]));
+        const bounds = integralBounds(current, "length");
+        const upper = Math.min(bounds.upper ?? Infinity, bounds.lower + MAX_LENGTH);
+        const size = bounds.lower + Math.floor(random() * (upper - bounds.lower + 1));
+        return Object.fromEntries(Array.from({ length: size }, (_, index) => [`key${index}`, draw(value)]));
       }
     }
     let values = leaves.get(current);

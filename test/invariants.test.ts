@@ -129,6 +129,29 @@ describe("declaring invariants", () => {
     ).toThrow("amend prepayment takes no order in any input case, so it cannot be handed the state");
   });
 
+  it("draws records within their length bounds", async () => {
+    const Tags = c.object({ tags: c.record(c.int().min(0).max(9)).min(3).max(5) });
+    const replace = c.behavior("replace tags", {
+      input: c.variants("kind", { replace: c.object({ state: Tags }) }),
+      result: c.variants("outcome", { ok: c.object({ state: c.object({ tags: c.record(c.int()) }) }) }),
+      effects: c.variants("type", {}),
+    });
+    const keeping = c.implement(replace, {
+      cases: { replace: c.model("keeps the tags", request => ({ result: { outcome: "ok" as const, state: request.state }, effects: [] })) },
+    });
+    const kept = await c.checkInvariants(c.invariants("tags", { state: Tags, operations: [{ implementation: keeping, state: "state" }] }), { runs: 30, steps: 1 });
+    expect(kept).toMatchObject({ status: "held", steps: 30 });
+
+    // An operation that empties the tags shows the state it started from.
+    const emptying = c.implement(replace, {
+      cases: { replace: c.model("empties the tags", () => ({ result: { outcome: "ok" as const, state: { tags: {} } }, effects: [] })) },
+    });
+    const emptied = await c.checkInvariants(c.invariants("tags", { state: Tags, operations: [{ implementation: emptying, state: "state" }] }));
+    const before = emptied.counterexample!.steps[0]!.before as { tags: Readonly<Record<string, number>> };
+    expect(Object.keys(before.tags).length).toBeGreaterThanOrEqual(3);
+    expect(Object.keys(before.tags).length).toBeLessThanOrEqual(5);
+  });
+
   it("does not run when no state holds the invariants", async () => {
     const Impossible = c.object({ value: c.int().min(0).max(10) }).refine("above ten", state => state.value.$gt(10));
     const keep = c.behavior("keep", {
