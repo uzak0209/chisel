@@ -283,6 +283,27 @@ describe("a world's invariants", () => {
     expect(await c.explore(declaration, { seed: 3 })).toStrictEqual(await c.explore(declaration, { seed: 3 }));
   });
 
+  it("draws an integer between bounds that are not integers, and refuses bounds with none between them", async () => {
+    const Count = c.object({ count: c.int().min(0) });
+    const tick = c.behavior("tick", {
+      input: c.variants("kind", { tick: c.object({}) }),
+      result: c.variants("outcome", { ok: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const ticking = c.implement(tick, { cases: { tick: c.model("ticks", () => ({ result: { outcome: "ok" as const }, effects: [] })) } });
+    const drawn = new Set<number>();
+    const declaration = (min: number, max: number) => c.world("counter", {
+      state: Count,
+      initial: [{ count: 0 }],
+      operations: [{ implementation: ticking, input: (_, draw) => { drawn.add(draw.int(min, max)); return { kind: "tick" }; }, next: state => state }],
+      invariants: [c.invariant<c.Infer<typeof Count>>("not negative", state => state.count.$gte(0))],
+    });
+    await c.explore(declaration(0.5, 2.5), { runs: 1, steps: 50 });
+    expect([...drawn].sort()).toStrictEqual([1, 2]);
+    await expect(c.explore(declaration(3, 1), { runs: 1, steps: 1 })).rejects.toThrow("draw.int has no integer from 3 to 1");
+    await expect(c.explore(declaration(1.2, 1.8), { runs: 1, steps: 1 })).rejects.toThrow("draw.int has no integer from 1.2 to 1.8");
+  });
+
   it("reports a starting state that breaks an invariant", async () => {
     const report = await c.explore(
       c.world("purchasing", {

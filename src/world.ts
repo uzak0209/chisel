@@ -82,7 +82,7 @@ export function transition(
 export interface Draw {
   // One of the values, or undefined when there are none.
   pick<V>(values: readonly V[]): V | undefined;
-  // An integer from min to max.
+  // An integer from min to max, both included; there must be one.
   int(min: number, max: number): number;
   // A value the schema takes, drawn as `explore` draws inputs, or undefined.
   value<V>(schema: Schema<V>): V | undefined;
@@ -268,7 +268,13 @@ async function walk<T>(
     const constants = declaration.operations.flatMap(item => constantsOf(guardsOf(item.implementation)));
     const draw: Draw = {
       pick: values => (values.length === 0 ? undefined : values[Math.floor(random() * values.length)]),
-      int: (min, max) => min + Math.floor(random() * (max - min + 1)),
+      int: (min, max) => {
+        // Bounds that are not integers are narrowed to the integers between them,
+        // so `int(1, 2.5)` never answers 3.
+        const low = Math.ceil(min), high = Math.floor(max);
+        if (!Number.isSafeInteger(low) || !Number.isSafeInteger(high) || low > high) throw new SpecificationError(`draw.int has no integer from ${min} to ${max}`);
+        return low + Math.floor(random() * (high - low + 1));
+      },
       value: schema => sampler(schema as AnySchema, constants, random)() as never,
     };
     const externals = externalsIn(operation.implementation);
