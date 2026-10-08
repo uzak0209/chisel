@@ -58,9 +58,10 @@ export function invariant<T>(name: string, condition: (state: TermOf<T>) => Chec
 // an action property `[][P]_vars` of TLA+ does: a step that leaves the state
 // as it was is not held to it. With `each`, the condition relates one record
 // before and after: the records at the field `each` names (a dotted path),
-// an array matched by the field `by`, or a record matched by its keys, are
-// paired by what names them, and each pair that changed is held to it; a
-// record only before or only after is not paired, and a state holding two
+// an array's elements or a record's records matched by the field `by`, or,
+// without `by`, a record's records by their keys, are paired by what names
+// them, and each pair that changed is held to it; a record without `by`, or
+// only before or only after, is not paired, and a state holding two
 // records with one key breaks it, since they cannot be paired.
 export function transition<T>(name: string, condition: (before: TermOf<T>, after: TermOf<T>) => Check): Transition;
 export function transition<E>(

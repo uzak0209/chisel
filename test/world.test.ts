@@ -274,6 +274,22 @@ describe("a world's invariants", () => {
     expect(report.status).toBe("held");
   });
 
+  it("pairs a record's records by the field by, not by their keys, when the transition names one", async () => {
+    const Entry = c.object({ id: c.string(), v: c.int() });
+    const State = c.object({ entries: c.record(Entry) });
+    const report = await c.explore(
+      c.world("entries", {
+        state: State,
+        initial: [{ entries: { first: { id: "x", v: 5 } } }],
+        // Moves record x to another key and lowers it.
+        operations: [{ implementation: creating, input: () => ({ kind: "create", id: "po-1", quantity: 1 }), next: () => ({ entries: { second: { id: "x", v: 1 } } }) }],
+        transitions: [c.transition<c.Infer<typeof Entry>>("never lowers", { each: "entries", by: "id" }, (before, after) => after.v.$gte(before.v))],
+      }),
+      { runs: 1, steps: 1 },
+    );
+    expect(report).toMatchObject({ status: "broken", counterexample: { reason: "create moved entries x in a way never lowers does not allow" } });
+  });
+
   it("takes an invariant written as a model expression", async () => {
     const counted = c.invariant<OrdersState>("at most five orders", state =>
       c.bind(c.int(), c.fold(Order, c.int(), state.orders, 0, count => c.arithmetic("add", count, 1)), count => c.choose(count.$lte(5), true, false)),
