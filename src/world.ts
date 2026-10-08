@@ -210,6 +210,17 @@ export async function explore<T>(
   const tally = declaration.operations.map(operation => ({ name: operation.name ?? operation.implementation.behavior.name, ran: 0, moved: 0, skipped: 0, pending: 0 }));
   // Why an operation could not be run where it was reached, by its index.
   const unrun = new Map<number, string>();
+  // Every starting state is checked before any walk: they are declared, not
+  // drawn, so a walk choosing among them at random must not leave one unchecked.
+  for (const start of declaration.initial) {
+    const broken = declaration.invariants.find(item => !checks(item.holds, start));
+    if (broken) {
+      return {
+        world: declaration.name, status: "broken", runs: 0, steps: 0, seed, operations: tally,
+        counterexample: { invariant: broken.name, reason: `The starting state does not hold ${broken.name}`, start, steps: [] },
+      };
+    }
+  }
   let total = 0;
   for (let run = 0; run < runs; run++) {
     const start: T = declaration.initial[Math.floor(main() * declaration.initial.length)]!;
@@ -268,8 +279,6 @@ async function walk<T>(
   } = {},
 ): Promise<Walked> {
   const steps: ExploredStep[] = [];
-  const startBreaks = declaration.invariants.find(item => !checks(item.holds, start));
-  if (startBreaks) return { broken: true, invariant: startBreaks.name, reason: `The starting state does not hold ${startBreaks.name}`, steps };
   let state = start;
   for (let step = 0; step < length; step++) {
     const { index, random } = choose(step);

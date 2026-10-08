@@ -404,6 +404,21 @@ describe("a world's invariants", () => {
     expect(report).toMatchObject({ status: "broken", counterexample: { invariant: "no order receives more than it ordered", steps: [] } });
   });
 
+  it("checks every starting state, not only those a walk happens to start from", async () => {
+    const declaration = c.world("purchasing", {
+      state: Orders,
+      initial: [{ orders: [] }, { orders: [{ status: "ISSUED", id: "po-1", quantity: 1, received: 2 }] }],
+      operations: operations(changingAboveReceived),
+      invariants: [neverOverReceived],
+    });
+    // Seed 0 starts its one walk from the first state, which holds.
+    const report = await c.explore(declaration, { runs: 1, steps: 1, seed: 0 });
+    expect(report).toMatchObject({
+      status: "broken", runs: 0,
+      counterexample: { invariant: "no order receives more than it ordered", start: declaration.initial[1], steps: [] },
+    });
+  });
+
   describe("an operation whose next changes the state it is handed", () => {
     const Count = c.object({ count: c.int().min(0) });
     type CountState = c.Infer<typeof Count>;
