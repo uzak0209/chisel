@@ -402,27 +402,35 @@ c.implement(approve, {
 
 A disregarded field draws no classes of its type, no invariant borders and no borders an `ensures` clause draws on it, so `generate` offers no row that only moves it; where a guard or a `match` reads it, it keeps the classes the guard draws or its own classes, since the arms turn on them. Every input case is still owed its row, guards still draw their borders and arms from the whole input, and an invariant that leaves a disregarded field empty is still a model error. Rows keep the whole record, so `c.test` hands production code what it takes. `check` holds the claim: it moves the disregarded fields of an answered row, each element of an array and each entry of a record on its own, through every combination of their other classes and of the invariant border points they would have owed (`IN (> 0)` for an `int().min(0)` at 0), smallest first, runs the model on each and fails the row on the first answer that changes, naming the fields it moved (`approve disregards @submitted.urgent, but its answer changed when @submitted.urgent was true`). A row with more than 255 combinations the input can hold, or more than 4096 candidates before those it cannot hold are left out, is not tried (the limits are the caller's: `c.check(specification, { disregards: { combinations, candidates } })`, or `chisel check --disregard-combinations <n> --disregard-candidates <n>`); it is listed in `incompleteness` as `disregards not checked` and leaves the verdict `undetermined`. `cases.$default` decides every case `cases` leaves out; it is one decision, so its arms and ways are listed once and owed wherever one of its cases can reach them, a `c.todo` there leaves each of its cases pending, and a `$default` beside cases that decide every case is refused. An input case cannot be named `$default`. [`examples/expense-report/`](examples/expense-report/) writes three behaviors over one five-state model both ways.
 
-## Invariants across operations
+## Invariants a world keeps
 
-Examples show that each behavior answers as its rows say; they do not show that a record several behaviors share stays whole however they are combined. A purchase order that one behavior creates, another amends and a third receives against keeps invariants none of them sees alone. Declare the record's schema with its invariants, and the operations that move it:
+Examples show that each behavior answers as its rows say. Some properties hold of a record only because the guards of several operations keep them together, and no single guard says so: a purchase order never receives more than it ordered because receiving checks what is open and changing the quantity checks what is received. Leave out either check and every example of each operation still passes, yet create, approve, issue, receive 3 of 8, then change the quantity to 2 reaches an order that has received more than it ordered.
+
+A world declares the state its operations share, the states it starts from, the operations that move it, and what must hold of every state they reach, apart from the state's type: the type says what a state may hold, an invariant what a reachable state does hold.
 
 ```ts
-const Order = c.object({ lines: c.array(Line).min(1) })
-  .refine("no line receives more than it ordered", order => order.lines.$all(line => line.received.$lte(line.quantity)));
+const purchasing = c.world("purchasing", {
+  state: Orders,
+  initial: [{ orders: [] }],
+  operations: [
+    { implementation: creating, input: (state, draw) => ({ kind: "create", id: `po-${state.orders.length + 1}`, quantity: draw.int(1, 10) }), next: appended },
+    { implementation: receiving, input: (state, draw) => onOneOrder(draw.pick(state.orders), draw.int(1, 10)), next: replaced },
+    { implementation: counting, state: "state" },
+  ],
+  invariants: [
+    c.invariant("no order receives more than it ordered", state => state.orders.$all(order => order.received.$lte(order.quantity))),
+  ],
+  transitions: [
+    c.transition("no order is lost", (before, after) => after.orders.$length().$gte(before.orders.$length())),
+  ],
+});
 
-const report = await c.checkInvariants(
-  c.invariants("order lines", {
-    state: Order,
-    operations: [
-      { implementation: receiveImplementation, state: "order" },
-      { implementation: amendImplementation, state: "order" },
-    ],
-  }),
-  { runs: 100, steps: 10, seed: 1 },
-);
+const report = await c.explore(purchasing, { runs: 100, steps: 20, seed: 1 });
 ```
 
-Each operation takes the state at the field `state` names in its input case, and answers the next state at the same field of its result; an answer without that field (a refusal) leaves the state as it was. `checkInvariants` draws a state that holds the invariants, then runs `steps` operations chosen at random, each on random values for the rest of its input, and does so `runs` times. Values are drawn from those `check` would try (bounds, borders and the constants the operations compare with), integers also between them, and arrays at any length up to eight past their lower bound, so that several items meet. The report is `held`, `broken` with the steps that led to the first state the invariants refuse (or the operation that failed, such as one answering a result its own schema refuses), `undetermined` when nothing broke but an operation never ran (no input of it took the state) or was reached where it is still `c.todo` or `c.external`, or `not run` when no state holding the invariants was found; it says how often each operation ran, moved the state, found no input that took the state (`skipped`) and could not be run (`pending`). `runs` and `steps` must be positive integers. The same `seed` draws the same sequences. A run that finds nothing is evidence, not a proof, as sampled successes never are.
+An invariant is a condition over the state, written with the term operators as a guard is, or a model expression answering a boolean when it needs `fold`, `bind` or `plus` to say; a transition relates the state before an operation to the state after it. An operation either acts on the whole world, taking the state at the input field `state` names and answering the next one at the same field of its result (an answer without it, a refusal, leaves the state as it was) while the rest of its input is drawn at random, or acts on part of it, such as one order, with `input` building its input from the state through `draw` (`pick`, `int`, `value` of a schema; undefined when there is nothing to act on) and `next` placing the answer back in the world.
+
+`explore` starts each of `runs` walks from one of the starting states and takes `steps` operations chosen at random, so it only ever checks states the operations reach. At every state it checks the state's type and every invariant, and across every step every transition. The report is `held`; `broken` with the invariant broken (or the operation that failed) and the steps from the starting state, each with its operation, input and the state before and after; or `undetermined` with a reason when nothing broke but an operation never ran (it had nothing to act on in any state reached) or was reached where a case is still `todo` or implemented outside Chisel, since the walks said nothing about it. It says how often each operation ran, moved the state, had nothing to act on (`skipped`) and could not be run (`pending`). `runs` and `steps` must be positive integers. A broken walk is shortened before it is reported: each step records the random numbers it drew, and steps are dropped one at a time while the rest, replayed with their numbers, still break the same invariant. The same `seed` draws the same walks. A walk that finds nothing is evidence, not a proof, as sampled successes never are.
 
 ## Composition
 

@@ -164,8 +164,8 @@ export { reportDocument, reportSchemaVersion } from "./report-json.js";
 export type { ReportSource, Weakening } from "./report-json.js";
 export { compose, isComposition } from "./composition.js";
 
-export { checkInvariants, invariants } from "./invariants.js";
-export type { InvariantOperation, InvariantReport, Invariants, InvariantStep } from "./invariants.js";
+export { explore, invariant, transition, world } from "./world.js";
+export type { Draw, ExploredStep, ExploreReport, Invariant, Operation, Transition, World } from "./world.js";
 export type { Composition } from "./composition.js";
 
 export { decode, encode } from "./codec.js";
