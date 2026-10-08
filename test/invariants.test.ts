@@ -164,3 +164,75 @@ describe("declaring invariants", () => {
     expect(report.status).toBe("not run");
   });
 });
+
+describe("what a run leaves unsaid", () => {
+  const amendNarrow = c.behavior("amend", {
+    input: c.variants("kind", { amend: c.object({ po: c.object({ prepayment: c.int().min(50).max(100) }) }) }),
+    result: c.variants("outcome", { ok: c.object({ po: c.object({ prepayment: c.int() }) }) }),
+    effects: c.variants("type", {}),
+  });
+  // Answers a state the invariants refuse, so any step it runs breaks them.
+  const breaking = c.implement(amendNarrow, {
+    cases: { amend: c.model("breaks the terms", () => ({ result: { outcome: "ok" as const, po: { prepayment: -1 } }, effects: [] })) },
+  });
+  const Low = c.object({ prepayment: c.int().min(0).max(10) });
+
+  it("is undetermined, not held, when no input of an operation takes the state", async () => {
+    const report = await c.checkInvariants(c.invariants("terms", { state: Low, operations: [{ implementation: breaking, state: "po" }] }), { runs: 5, steps: 5 });
+    expect(report).toMatchObject({ status: "undetermined", steps: 0, operations: [{ name: "amend", ran: 0, moved: 0, skipped: 25, pending: 0 }] });
+    expect(report.reason).toBe("amend never ran: no input of it took the state");
+  });
+
+  it("hands the state to an input whose own field random draws rarely meet", async () => {
+    const Coded = c.object({ code: c.string() }).refine("code is PO-7", po => po.code.$eq("PO-7"));
+    const rename = c.behavior("rename", {
+      input: c.variants("kind", { rename: c.object({ po: Coded }) }),
+      result: c.variants("outcome", { ok: c.object({ po: Coded }) }),
+      effects: c.variants("type", {}),
+    });
+    const keeping = c.implement(rename, {
+      cases: { rename: c.model("keeps the code", request => ({ result: { outcome: "ok" as const, po: request.po }, effects: [] })) },
+    });
+    const report = await c.checkInvariants(
+      c.invariants("code", { state: c.object({ code: c.literal("PO-7") }), operations: [{ implementation: keeping, state: "po" }] }),
+      { runs: 3, steps: 2 },
+    );
+    expect(report).toMatchObject({ status: "held", steps: 6, operations: [{ ran: 6, skipped: 0 }] });
+  });
+
+  it("is undetermined, not broken, where an operation is still todo or implemented outside Chisel", async () => {
+    const pending = c.implement(amendNarrow, { cases: { amend: c.todo("not decided") } });
+    const High = c.object({ prepayment: c.int().min(50).max(100) });
+    const todoHigh = await c.checkInvariants(c.invariants("terms", { state: High, operations: [{ implementation: pending, state: "po" }] }), { runs: 2, steps: 2 });
+    expect(todoHigh).toMatchObject({ status: "undetermined", steps: 0, operations: [{ ran: 0, pending: 4 }] });
+    expect(todoHigh.reason).toBe("amend could not be run: The decision for amend of amend is still todo: not decided");
+
+    const outside = await c.checkInvariants(
+      c.invariants("terms", { state: High, operations: [{ implementation: c.external(amendNarrow, "the ERP"), state: "po" }] }),
+      { runs: 2, steps: 2 },
+    );
+    expect(outside).toMatchObject({ status: "undetermined", operations: [{ ran: 0, pending: 4 }] });
+    expect(outside.reason).toBe("amend could not be run: implemented outside Chisel (amend: the ERP)");
+  });
+
+  it("keeps the runs it drew a state for when a later one draws none", async () => {
+    // Four flags all set: a draw meets it now and then, not every time.
+    const Flags = c.object({ flags: c.array(c.boolean()) }).refine("four set flags", state => state.flags.$length().$eq(4).$and(state.flags.$all(flag => flag.$eq(true))));
+    const keep = c.behavior("keep", {
+      input: c.variants("kind", { keep: c.object({ state: Flags }) }),
+      result: c.variants("outcome", { ok: c.object({}) }),
+      effects: c.variants("type", {}),
+    });
+    const implementation = c.implement(keep, { cases: { keep: c.model("keeps", () => ({ result: { outcome: "ok" as const }, effects: [] })) } });
+    const report = await c.checkInvariants(c.invariants("flags", { state: Flags, operations: [{ implementation, state: "state" }] }), { runs: 10, steps: 1, seed: 1 });
+    expect(report.status).toBe("held");
+    expect(report.runs).toBeGreaterThan(0);
+    expect(report.runs).toBeLessThan(10);
+  });
+
+  it("refuses runs and steps that are not positive integers", async () => {
+    const declaration = c.invariants("terms", { state: Terms, operations: [{ implementation: amendingBoth, state: "po" }] });
+    await expect(c.checkInvariants(declaration, { runs: 0 })).rejects.toThrow("runs must be a positive integer, but was 0");
+    await expect(c.checkInvariants(declaration, { steps: Number.NaN })).rejects.toThrow("steps must be a positive integer, but was NaN");
+  });
+});

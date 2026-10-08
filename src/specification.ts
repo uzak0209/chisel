@@ -1728,7 +1728,7 @@ function openDecisionIn(
     : `${error.behavior}: ${error.variant}`;
 }
 
-function externalsIn(implementation: AnyImplementation | undefined): string[] {
+export function externalsIn(implementation: AnyImplementation | undefined): string[] {
   if (implementation === undefined) {
     return [];
   }
@@ -2041,7 +2041,7 @@ const DISREGARD_COMBINATION_LIMIT = 255;
 // be one the input can hold, so the candidates tried that way are bounded too.
 const DISREGARD_CANDIDATE_LIMIT = 4096;
 
-function positiveLimit(name: string, given: number | undefined, fallback: number): number {
+export function positiveLimit(name: string, given: number | undefined, fallback: number): number {
   if (given === undefined) {
     return fallback;
   }

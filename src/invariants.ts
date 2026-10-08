@@ -7,9 +7,11 @@
 // sequence that ends in a state they do not hold. It samples; a run that
 // finds nothing is evidence, not a proof.
 import type { AnyImplementation } from "./behavior.js";
-import { perform, SpecificationError } from "./behavior.js";
+import { perform, SpecificationError, TodoDecision } from "./behavior.js";
 import { constantsOf, domainOf, integralBounds } from "./domain.js";
 import type { Rule } from "./rule.js";
+import { object } from "./schema.js";
+import { externalsIn, positiveLimit } from "./specification.js";
 import type {
   AnySchema,
   AnyVariantsSchema,
@@ -63,12 +65,23 @@ export interface InvariantStep {
 
 export interface InvariantReport {
   readonly name: string;
-  readonly status: "held" | "broken" | "not run";
+  // `undetermined` when nothing broke but an operation never ran, or was
+  // reached where it is still `todo` or implemented outside Chisel: the
+  // sequences said nothing about it.
+  readonly status: "held" | "broken" | "undetermined" | "not run";
   readonly runs: number;
   readonly steps: number;
   readonly seed: number;
-  // How often each operation ran, and how often it answered a next state.
-  readonly operations: readonly { readonly name: string; readonly ran: number; readonly moved: number }[];
+  // How often each operation ran, how often it answered a next state, how
+  // often no input of it took the state, and how often it was reached where
+  // it could not be run.
+  readonly operations: readonly {
+    readonly name: string;
+    readonly ran: number;
+    readonly moved: number;
+    readonly skipped: number;
+    readonly pending: number;
+  }[];
   readonly counterexample?: { readonly reason: string; readonly steps: readonly InvariantStep[] };
   readonly reason?: string;
 }
@@ -77,59 +90,89 @@ export async function checkInvariants<T>(
   declaration: Invariants<T>,
   options: { readonly runs?: number; readonly steps?: number; readonly seed?: number } = {},
 ): Promise<InvariantReport> {
-  const runs = options.runs ?? 100;
-  const length = options.steps ?? 10;
+  const runs = positiveLimit("runs", options.runs, 100);
+  const length = positiveLimit("steps", options.steps, 10);
   const seed = options.seed ?? 1;
   const random = mulberry32(seed);
-  const tally = declaration.operations.map(operation => ({ name: operation.implementation.behavior.name, ran: 0, moved: 0 }));
+  const tally = declaration.operations.map(operation => ({ name: operation.implementation.behavior.name, ran: 0, moved: 0, skipped: 0, pending: 0 }));
+  // Why an operation could not be run where it was reached, by its index.
+  const unrun = new Map<number, string>();
   const constants = declaration.operations.flatMap(operation => constantsOf(guardsOf(operation.implementation)));
   const stateOf = sampler(declaration.state as AnySchema, constants, random);
   let total = 0;
-  const broken = (run: number, reason: string, steps: readonly InvariantStep[]): InvariantReport => ({
-    name: declaration.name, status: "broken", runs: run + 1, steps: total, seed, operations: tally, counterexample: { reason, steps },
+  let started = 0;
+  const broken = (reason: string, steps: readonly InvariantStep[]): InvariantReport => ({
+    name: declaration.name, status: "broken", runs: started, steps: total, seed, operations: tally, counterexample: { reason, steps },
   });
   for (let run = 0; run < runs; run++) {
+    // A run whose state was not drawn is left out; the runs before it still count.
     let state = stateOf();
-    if (state === undefined) {
-      return { name: declaration.name, status: "not run", runs: run, steps: total, seed, operations: tally, reason: `No state that holds the invariants of ${declaration.name} was found` };
-    }
+    if (state === undefined) continue;
+    started++;
     const steps: InvariantStep[] = [];
     for (let step = 0; step < length; step++) {
       const index = Math.floor(random() * declaration.operations.length);
       const operation = declaration.operations[index]!;
+      const externals = externalsIn(operation.implementation);
+      if (externals.length > 0) {
+        tally[index]!.pending++;
+        unrun.set(index, `implemented outside Chisel (${externals.join(", ")})`);
+        continue;
+      }
       const input = inputFor(operation, state, constants, random);
-      if (input === undefined) continue;
-      tally[index]!.ran++;
-      total++;
+      if (input === undefined) {
+        tally[index]!.skipped++;
+        continue;
+      }
       const before = state;
       let execution: { readonly result: unknown };
       try {
         execution = await perform(operation.implementation, input as never, operation.deps as never);
       } catch (error) {
+        // A case still todo is unfinished work, not a state the invariants refuse.
+        if (error instanceof TodoDecision) {
+          tally[index]!.pending++;
+          unrun.set(index, error.message);
+          continue;
+        }
+        tally[index]!.ran++;
+        total++;
         steps.push({ operation: tally[index]!.name, input, before });
         const reason = error instanceof Error ? error.message : String(error);
-        return broken(run, `${tally[index]!.name} failed: ${reason}`, steps);
+        return broken(`${tally[index]!.name} failed: ${reason}`, steps);
       }
+      tally[index]!.ran++;
+      total++;
       const answered = fieldOf(execution.result, operation.state);
       steps.push({ operation: tally[index]!.name, input, before, result: execution.result, ...(answered.present ? { after: answered.value } : {}) });
       if (!answered.present) continue;
       tally[index]!.moved++;
       const parsed = declaration.state.parse(answered.value);
-      if (!parsed.success) return broken(run, `${tally[index]!.name} answered a state ${declaration.name} does not hold: ${parsed.issues.map(issue => `${issue.path}: ${issue.message}`).join("; ")}`, steps);
+      if (!parsed.success) return broken(`${tally[index]!.name} answered a state ${declaration.name} does not hold: ${parsed.issues.map(issue => `${issue.path}: ${issue.message}`).join("; ")}`, steps);
       state = parsed.value;
     }
   }
-  return { name: declaration.name, status: "held", runs, steps: total, seed, operations: tally };
+  const report = { name: declaration.name, runs: started, steps: total, seed, operations: tally };
+  if (started === 0) {
+    return { ...report, status: "not run", reason: `No state that holds the invariants of ${declaration.name} was found` };
+  }
+  const reasons = tally.flatMap((operation, index) =>
+    operation.pending > 0 ? [`${operation.name} could not be run: ${unrun.get(index)}`]
+    : operation.ran === 0 ? [`${operation.name} never ran: no input of it took the state`]
+    : []);
+  return reasons.length > 0 ? { ...report, status: "undetermined", reason: reasons.join("; ") } : { ...report, status: "held" };
 }
 
 // An input for the operation: a random case that takes the state, the state
-// at its field and random values elsewhere.
+// at its field and random values elsewhere. The state's field is left out of
+// what is drawn, so a draw of it the case would refuse does not refuse the input.
 function inputFor(operation: InvariantOperation, state: unknown, constants: readonly unknown[], random: () => number): unknown {
   const schema = operation.implementation.behavior.input;
   const tags = schema.variantTags.filter(tag => Object.hasOwn(schema.variants[tag]!.shape, operation.state));
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     const tag = tags[Math.floor(random() * tags.length)]!;
-    const rest = sampler(schema.variants[tag]!, [...constants, ...constantsOf(guardsOf(operation.implementation))], random)();
+    const { [operation.state]: _, ...others } = schema.variants[tag]!.shape;
+    const rest = sampler(object(others), [...constants, ...constantsOf(guardsOf(operation.implementation))], random)();
     if (rest === undefined) continue;
     const input = { [schema.discriminant]: tag, ...(rest as object), [operation.state]: state };
     if (schema.parse(input).success) return input;
